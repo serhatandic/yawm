@@ -121,7 +121,15 @@ jobs:
             --title "yawm $GITHUB_REF_NAME" \
             --notes "Installers for yawm $GITHUB_REF_NAME. These builds are unsigned; macOS Gatekeeper and Windows SmartScreen may display a warning until platform signing is configured."
 
-          release_id="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$GITHUB_REF_NAME" --jq .id)"
+          release_id="$(
+            gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+              --jq '.[] | select(.draft == true) | [.tag_name, .id] | @tsv' |
+              awk -v tag="$GITHUB_REF_NAME" '$1 == tag { print $2; exit }'
+          )"
+          if [[ -z "$release_id" ]]; then
+            echo "Could not find the draft release for $GITHUB_REF_NAME." >&2
+            exit 1
+          fi
           echo "release_id=$release_id" >> "$GITHUB_OUTPUT"
 
   build:
