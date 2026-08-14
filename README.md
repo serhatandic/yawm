@@ -6,6 +6,8 @@
 [![Release](https://img.shields.io/github/v/release/serhatandic/yawm?include_prereleases&label=release)](https://github.com/serhatandic/yawm/releases)
 [![License: PolyForm Noncommercial 1.0.0](https://img.shields.io/badge/license-PolyForm%20Noncommercial%201.0.0-blue.svg)](LICENSE)
 
+<img src="docs/assets/yawm-overview.png" alt="yawm showing Git worktrees with Keep verdicts and evidence explaining why the selected worktree should not be deleted" width="100%">
+
 AI coding agents make it easy to create a worktree for every task. Those
 worktrees accumulate, their dependency folders consume disk space, and it
 becomes difficult to tell which branches are finished and which still contain
@@ -18,17 +20,6 @@ that a worktree is safe to remove, it never calls it Disposable.
 [Download for macOS, Windows, or Linux](https://github.com/serhatandic/yawm/releases)
 · [Report a bug](https://github.com/serhatandic/yawm/issues/new/choose)
 · [Build from source](#build-from-source)
-
-<!--
-README media placeholder:
-
-Add docs/assets/yawm-overview.png or docs/assets/yawm-overview.gif here. Show
-the main list with all four verdicts visible and the Changes inspector open.
-Keep an animated capture around 8–12 seconds and include this alt text:
-
-"yawm listing Git worktrees with Keep, Disposable, Review, and Broken verdicts,
-alongside a panel showing the selected worktree's changes."
--->
 
 ## Download
 
