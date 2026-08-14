@@ -47,8 +47,15 @@ jobs:
             exit 1
           fi
 
-          if [[ "$(git cat-file -t "$GITHUB_REF_NAME")" != tag ]]; then
+          tag_ref="refs/tags/$GITHUB_REF_NAME"
+          tag_oid="$(git ls-remote --tags origin "$tag_ref" | awk 'NR == 1 { print $1 }')"
+          peeled_oid="$(git ls-remote --tags origin "$tag_ref^{}" | awk 'NR == 1 { print $1 }')"
+          if [[ -z "$tag_oid" || -z "$peeled_oid" ]]; then
             echo "Release tags must be annotated." >&2
+            exit 1
+          fi
+          if [[ "$peeled_oid" != "$(git rev-parse HEAD)" ]]; then
+            echo "The remote release tag does not resolve to the checked-out commit." >&2
             exit 1
           fi
 
