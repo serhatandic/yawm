@@ -1,0 +1,257 @@
+name: Release
+
+# A semantic version tag starts an exact-tree CI run. Installers remain in a
+# draft release until every platform, checksum, notice, and registry upload is
+# complete.
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    permissions:
+      contents: read
+    uses: ./.github/workflows/ci.yml
+
+  verify:
+    name: verify release input
+    needs: ci
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+
+      - name: Verify tag and versions
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ ! "$GITHUB_REF_NAME" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+            echo "Release tag must use vMAJOR.MINOR.PATCH." >&2
+            exit 1
+          fi
+
+          if [[ "$(git cat-file -t "$GITHUB_REF_NAME")" != tag ]]; then
+            echo "Release tags must be annotated." >&2
+            exit 1
+          fi
+
+          git fetch --no-tags origin main:refs/remotes/origin/main
+          if [[ "$(git rev-parse HEAD)" != "$(git rev-parse origin/main)" ]]; then
+            echo "Release tag must point at the current main commit." >&2
+            exit 1
+          fi
+
+          version="${GITHUB_REF_NAME#v}"
+          cargo_versions="$(cargo metadata --locked --no-deps --format-version 1 | jq -r '.packages[].version' | sort -u)"
+          if [[ "$cargo_versions" != "$version" ]]; then
+            echo "Cargo workspace versions do not match $version: $cargo_versions" >&2
+            exit 1
+          fi
+
+          node --input-type=module <<'NODE'
+          import fs from "node:fs";
+
+          const expected = process.env.GITHUB_REF_NAME.slice(1);
+          const files = [
+            ["apps/desktop/package.json", JSON.parse(fs.readFileSync("apps/desktop/package.json", "utf8")).version],
+            ["apps/desktop/package-lock.json", JSON.parse(fs.readFileSync("apps/desktop/package-lock.json", "utf8")).version],
+            ["apps/desktop/src-tauri/tauri.conf.json", JSON.parse(fs.readFileSync("apps/desktop/src-tauri/tauri.conf.json", "utf8")).version],
+          ];
+
+          for (const [file, actual] of files) {
+            if (actual !== expected) {
+              throw new Error(`${file} declares ${actual}; expected ${expected}`);
+            }
+          }
+          NODE
+
+  prepare:
+    name: prepare draft release
+    needs: verify
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    outputs:
+      release_id: ${{ steps.release.outputs.release_id }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Create an empty draft
+        id: release
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            is_draft="$(gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)"
+            if [[ "$is_draft" != true ]]; then
+              echo "A published release already exists for $GITHUB_REF_NAME." >&2
+              exit 1
+            fi
+            gh release delete "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --yes
+          fi
+
+          gh release create "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --draft \
+            --title "yawm $GITHUB_REF_NAME" \
+            --notes "Installers for yawm $GITHUB_REF_NAME. These builds are unsigned; macOS Gatekeeper and Windows SmartScreen may display a warning until platform signing is configured."
+
+          release_id="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$GITHUB_REF_NAME" --jq .id)"
+          echo "release_id=$release_id" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: build (${{ matrix.platform }})
+    needs: prepare
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux-x86_64
+            os: ubuntu-22.04
+            args: --bundles deb,rpm,appimage
+          - platform: macos-universal
+            os: macos-latest
+            args: --target universal-apple-darwin --bundles dmg
+          - platform: windows-x86_64
+            os: windows-latest
+            args: --bundles nsis
+
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.ref }}
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
+        with:
+          targets: ${{ matrix.platform == 'macos-universal' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+
+      - name: Install Linux dependencies
+        if: matrix.os == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            libgtk-3-dev \
+            libsoup-3.0-dev \
+            libjavascriptcoregtk-4.1-dev \
+            rpm
+
+      - name: Install frontend dependencies
+        working-directory: apps/desktop
+        run: npm ci
+
+      - name: Build bundles into the draft release
+        uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: apps/desktop
+          releaseId: ${{ needs.prepare.outputs.release_id }}
+          tagName: ${{ github.ref_name }}
+          releaseDraft: true
+          prerelease: false
+          args: ${{ matrix.args }}
+
+  publish:
+    name: publish release and package
+    needs: build
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+      packages: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Verify installer set
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+
+          printf '%s\n' \
+            "yawm-$version-1.x86_64.rpm" \
+            "yawm_${version}_amd64.AppImage" \
+            "yawm_${version}_amd64.deb" \
+            "yawm_${version}_universal.dmg" \
+            "yawm_${version}_x64-setup.exe" \
+            | sort > expected-assets.txt
+
+          gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
+            --json assets --jq '.assets[].name' | sort > actual-assets.txt
+          diff -u expected-assets.txt actual-assets.txt
+
+      - name: Add checksums and legal notices
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir release-assets
+          gh release download "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --dir release-assets
+          sha256sum release-assets/* | sed 's#release-assets/##' > SHA256SUMS
+          gh release upload "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
+            LICENSE NOTICE THIRD_PARTY_LICENSES.txt SHA256SUMS
+
+      - name: Set up ORAS
+        uses: oras-project/setup-oras@1d808f7d7f6995cc68b7bf507bfe5c5446e1dc9d # v2.0.1
+
+      - name: Publish the GitHub Package
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "$GH_TOKEN" | oras login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          oras push "ghcr.io/$GITHUB_REPOSITORY:$GITHUB_REF_NAME" \
+            --artifact-type application/vnd.yawm.release.v1 \
+            --annotation "org.opencontainers.image.title=yawm $GITHUB_REF_NAME" \
+            --annotation "org.opencontainers.image.description=Cross-platform yawm desktop installers" \
+            --annotation "org.opencontainers.image.source=https://github.com/$GITHUB_REPOSITORY" \
+            --annotation "org.opencontainers.image.version=${GITHUB_REF_NAME#v}" \
+            release-assets/* LICENSE NOTICE THIRD_PARTY_LICENSES.txt SHA256SUMS
+          oras manifest fetch "ghcr.io/$GITHUB_REPOSITORY:$GITHUB_REF_NAME" >/dev/null
+
+      - name: Publish the completed release
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
+            --draft=false --prerelease=false --latest
+
+          if [[ "$(gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)" != false ]]; then
+            echo "Release is still a draft." >&2
+            exit 1
+          fi

@@ -1,0 +1,15 @@
+{
+  "packages": {
+    "@tauri-apps/api@2.11.1": "licenses/overrides/tauri-apps-api-2.11.1-MIT.txt",
+    "lru_map@0.4.1": "licenses/overrides/lru_map-0.4.1-MIT.txt",
+    "react-remove-scroll-bar@2.3.8": "licenses/overrides/react-remove-scroll-bar-2.3.8-MIT.txt"
+  },
+  "manual": [
+    {
+      "name": "shadcn/ui generated components",
+      "license": "MIT",
+      "source": "https://github.com/shadcn-ui/ui",
+      "file": "licenses/overrides/shadcn-ui-MIT.txt"
+    }
+  ]
+}

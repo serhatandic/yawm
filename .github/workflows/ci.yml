@@ -1,0 +1,153 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_call:
+
+env:
+  CARGO_TERM_COLOR: always
+  # Fail on warnings rather than letting them accumulate.
+  RUSTFLAGS: -D warnings
+
+jobs:
+  licenses:
+    name: licenses
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+
+      - name: Install cargo-about
+        env:
+          CARGO_ABOUT_SHA256: c0e7dc6f5d74b0beec5c0053d39ab24514c717d19acd91886907a22457ea9e98
+        run: |
+          archive="$RUNNER_TEMP/cargo-about.tar.gz"
+          directory="$RUNNER_TEMP/cargo-about"
+          curl --fail --location --silent --show-error \
+            https://github.com/EmbarkStudios/cargo-about/releases/download/0.9.1/cargo-about-0.9.1-x86_64-unknown-linux-musl.tar.gz \
+            --output "$archive"
+          echo "$CARGO_ABOUT_SHA256  $archive" | sha256sum --check
+          mkdir -p "$directory"
+          tar --extract --gzip --file "$archive" --directory "$directory" \
+            --strip-components=1
+          echo "$directory" >> "$GITHUB_PATH"
+
+      - name: Install frontend dependencies
+        working-directory: apps/desktop
+        run: npm ci
+
+      - name: Fetch Rust license inputs
+        run: cargo fetch --locked
+
+      - name: Check third-party licenses
+        run: npm run licenses:check --prefix apps/desktop
+
+  # The core and the CLI carry all of yawm's logic and no GUI dependency, so
+  # they are tested on every platform. Building the CLI here is also the
+  # structural check: if logic ever leaks into the desktop crate, this breaks.
+  core:
+    name: core (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # ubuntu-22.04 is pinned deliberately: it is the oldest distribution
+        # yawm supports, because Tauri v2 needs webkit2gtk 4.1.
+        os: [ubuntu-22.04, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+
+      # Several tests build real repositories and run worktree commands, so the
+      # runner's git must be able to commit.
+      - name: Configure git
+        run: |
+          git config --global user.name "yawm ci"
+          git config --global user.email "ci@yawm.dev"
+          git config --global init.defaultBranch main
+
+      - name: Format
+        run: cargo fmt --all --check
+
+      - name: Clippy
+        run: cargo clippy --locked -p yawm-core -p yawm-cli --all-targets
+
+      - name: Test
+        run: cargo test --locked -p yawm-core -p yawm-cli
+
+      - name: Build the CLI
+        run: cargo build --locked -p yawm-cli --release
+
+      # A smoke test that the binary actually runs on this platform.
+      - name: Run the CLI
+        run: cargo run --locked -p yawm-cli --release -- --version
+
+  # The desktop app is built separately because it needs system webview
+  # libraries that the core deliberately does not.
+  desktop:
+    name: desktop (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+
+      # Tauri links against the system webview on Linux; webkit2gtk 4.1 is what
+      # sets the Ubuntu 22.04 floor.
+      - name: Install Linux dependencies
+        if: matrix.os == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            libgtk-3-dev \
+            libsoup-3.0-dev \
+            libjavascriptcoregtk-4.1-dev
+
+      - name: Install frontend dependencies
+        working-directory: apps/desktop
+        # The lockfile is part of the build input. `npm install` can silently
+        # rewrite it and test a dependency graph different from the one in the
+        # commit; `npm ci` refuses that drift instead.
+        run: npm ci
+
+      - name: Typecheck and build the frontend
+        working-directory: apps/desktop
+        run: npm run build
+
+      # The rules deciding what a deletion is allowed to destroy are plain
+      # functions precisely so they can be tested without a browser, and a test
+      # nobody runs is worth nothing.
+      - name: Test the frontend
+        working-directory: apps/desktop
+        run: npm test
+
+      - name: Build the desktop app
+        run: cargo build --locked -p yawm-desktop --release

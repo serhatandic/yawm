@@ -1,0 +1,11 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Capabilities for the main yawm window. start-dragging is listed explicitly because core:default does not include it: with an overlay title bar there is no native strip to grab, so the window is moved by our own chrome, and without this permission the drag region resolves correctly and the IPC call is then denied — leaving the window silently impossible to move.",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "dialog:allow-open",
+    "core:window:allow-start-dragging"
+  ]
+}

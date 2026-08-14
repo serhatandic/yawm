@@ -1,0 +1,33 @@
+# Rust
+/target
+**/target
+/.yawm-tooling
+
+# Node
+node_modules
+dist
+dist-ssr
+*.local
+
+# Tauri
+apps/desktop/src-tauri/target
+apps/desktop/src-tauri/gen
+
+# Editor / OS
+.DS_Store
+.idea
+.vscode/*
+!.vscode/extensions.json
+*.swp
+
+# Tauri generated icons are derived from icons/icon.png
+apps/desktop/src-tauri/gen/
+
+# Verification artifacts. Screenshots and driver scripts are how UI work gets
+# checked here, and they live at the repository root while that happens; a
+# blind `git add -A` swept 2.5 MB of them into a commit once.
+/scratch*
+/*.png
+/*.log
+apps/desktop/scratch/
+.shots/

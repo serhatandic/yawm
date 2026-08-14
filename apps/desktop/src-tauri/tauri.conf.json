@@ -1,0 +1,66 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "yawm",
+  "version": "0.1.0",
+  "identifier": "dev.yawm.app",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:5178",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "yawm",
+        "width": 1180,
+        "height": 760,
+        "minWidth": 940,
+        "minHeight": 560,
+        "resizable": true,
+        "theme": "Dark",
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
+        "trafficLightPosition": {
+          "x": 16,
+          "y": 24
+        }
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "license": "PolyForm-Noncommercial-1.0.0",
+    "licenseFile": "../../../LICENSE",
+    "copyright": "Copyright © 2026 Serhat Andıç",
+    "resources": {
+      "../../../LICENSE": "licenses/LICENSE",
+      "../../../NOTICE": "licenses/NOTICE",
+      "../../../THIRD_PARTY_LICENSES.txt": "licenses/THIRD_PARTY_LICENSES.txt"
+    },
+    "targets": [
+      "dmg",
+      "app",
+      "deb",
+      "rpm",
+      "appimage",
+      "nsis"
+    ],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "windows": {
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper"
+      }
+    }
+  },
+  "mainBinaryName": "yawm"
+}
